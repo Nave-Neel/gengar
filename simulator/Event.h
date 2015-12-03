@@ -10,9 +10,9 @@ class Event
      	private:
 
 	public:
-		Node* event_node;
 		long start_time;
-		virtual std::vector<Event*> handle();
+		//should be a pure virtual
+		virtual std::vector<Event*>* handle() {};
 };
  
 #endif
