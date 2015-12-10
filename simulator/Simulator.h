@@ -34,11 +34,19 @@ class Simulator
 			cluster = new std::vector<Node>(number_nodes);
 		}
 
-		void set_disk(double mean, double var){
-			disk_bandwidth = new std::normal_distribution<double>(mean, var);
+		void set_disk_write_bandwidth(double mean, double var){
+			disk_write_bandwidth = new std::normal_distribution<double>(mean, var);
+		}
+		
+		void set_disk_read_bandwidth(double mean, double var){
+			disk_read_bandwidth = new std::normal_distribution<double>(mean, var);
 		}
 
-		void set_network(double mean, double var){
+		void set_network_latency(double mean, double var){
+			network_latency = new std::normal_distribution<double>(mean, var);
+		}
+		
+		void set_network_bandwidth(double mean, double var){
 			network_bandwidth = new std::normal_distribution<double>(mean, var);
 		}
 };
