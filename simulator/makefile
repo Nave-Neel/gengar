@@ -1,6 +1,6 @@
-CXX=g++
+CXX=/s/gcc-4.8.2/bin/g++
 RM=rm -f
-CPPFLAGS= -g -std=c++11 
+CPPFLAGS=-std=c++0x 
 
 SRCS=main.cpp
 OBJS=$(subst .cc,.o,$(SRCS))
@@ -8,7 +8,7 @@ OBJS=$(subst .cc,.o,$(SRCS))
 all: main
 
 main: main.cpp
-	$(CXX) $(SRCS) -o main
+	$(CXX) $(CPPFLAGS) $(SRCS) -o main
 
 clean:
 	$(RM) *.o
