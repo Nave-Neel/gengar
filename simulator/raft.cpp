@@ -86,6 +86,7 @@ class Event{
 		int executed_on;
 		long start_time;
 		virtual void handle() = 0;//pure virtual
+		~Event(){}//in the virtual destructor, we do not delete the dynamically allocated Event* as they are added to the event queue and deleted later
 };
 
 class ClientCommandEvent : public Event{
@@ -164,6 +165,10 @@ class Client
 			cmd.command_string = random_command;
 			return new ClientCommandEvent(cmd, time);
 		}
+		
+		~Client(){
+			delete next_request_time;
+		}
 };
 
 
@@ -193,15 +198,22 @@ class Simulator
 						next = *it;
 					}
 				}
+				//remove event from event queue
 				event_queue.erase(next);
 				cout<<next->executed_on<<endl;
 				cout<<next->start_time<<endl;
+				//handle the event - modifies state on the node
 				next->handle();
+				//add the generated events to the event queue
+				for(int e=0; e<next->generated_events.size(); ++e){
+					event_queue.insert(next->generated_events[e]);
+				}
 				//add to generated_events here 
 				if(ClientCommandEvent* clientCommandEvent = dynamic_cast<ClientCommandEvent*>(next)){
 					std::cout<<"Client command received at " << clientCommandEvent->start_time << std::endl;
 					event_queue.insert(client->getCommand());
 				}
+				//handles the deletion of all the generated events
 				delete next;
 			}
 			std::cerr<<"No More Events to Simulate !!"<<std::endl;	
@@ -237,7 +249,13 @@ class Simulator
 		}
 
 		~Simulator(){
-			//clean up the dynamically allocated nodes
+			delete client;
+			delete generator;
+			delete disk_write_bandwidth;
+			delete disk_read_bandwidth;
+			delete network_bandwidth;
+			delete network_latency;
+			delete timeout;
 		}
 };
 
