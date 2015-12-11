@@ -4,7 +4,7 @@ int main(int argc, char* argv[]){
 	Simulator simulator;
 	simulator.set_number_nodes(3);
 	//1000 uS - 1 ms
-	simulator.set_network_latency(1000, 100);
+	simulator.set_network_latency(7000, 200);
 	//10 bytes/uS - 10Mbps
 	simulator.set_network_bandwidth(10, 3);
 	//100 bytes/uS - 100Mbps
