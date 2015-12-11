@@ -15,8 +15,8 @@ class ClientCommandEvent : public Event{
 			this->start_time = start_time;
 		}
 		
-		virtual std::vector<Event*>* handle() override {
-			return new std::vector<Event*>();
+		virtual void handle() override {
+			return;
 		}
 		//needs a virtual destructor to clean up the command on delete
 		
