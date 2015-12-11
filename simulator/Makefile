@@ -8,7 +8,7 @@ OBJS=$(subst .cc,.o,$(SRCS))
 all: main
 
 main: main.cpp
-	$(CXX) $(CPPFLAGS) $(SRCS) -o raft
+	$(CXX) $(CPPFLAGS) $(SRCS) -o exe_raft
 
 clean:
 	$(RM) *.o raft
