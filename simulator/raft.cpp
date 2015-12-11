@@ -1,5 +1,6 @@
 #include <iostream>
 #include <queue>
+#include <set>
 #include <vector>
 #include <iomanip>
 #include <string>
@@ -8,35 +9,44 @@
 #include <cmath>
 #include <chrono>
 
+using std::cout;
+using std::endl;
+
 #include "../common/util.h"
 
-enum STATE{LEADER, FOLLOWER};
+enum STATE{LEADER, FOLLOWER, CANDIDATE};
 
 //some forward declarations for the globals
 class Client;
 class Node;
 
 //-----------------Globals---------------------//
-std::default_random_engine generator;
+std::default_random_engine* generator;
+std::normal_distribution<double>* timeout;
 std::normal_distribution<double>* network_latency;
 std::normal_distribution<double>* network_bandwidth;
 std::normal_distribution<double>* disk_read_bandwidth;
 std::normal_distribution<double>* disk_write_bandwidth;
-std::vector<Node>* cluster;
+std::vector<Node*> cluster;
 Client* client;
 //-----------------Globals---------------------//
+
+double get_random(std::normal_distribution<double>* distribution){
+	return (*distribution)(*generator); 
+}
 
 class Command
 {
      	private:
-		int command_id;
-		std::string command_string;
 
 	public:
+		int command_id;
+		std::string command_string;
+		/* Not sure why but this constructor does not work
 		Command(int id, std::string command){
 			this->command_id = id;
 			this->command_string = command;
-		}
+		}*/
 };
 
 class Node
@@ -49,7 +59,7 @@ class Node
 		int votes_received;
 		int voted_for;
 		long last_timestamp;
-		std::vector<std::pair<int, Command> >* log;
+		std::vector<std::pair<int, Command> > log;
 		
 		Node(){
 			time = 0;
@@ -58,57 +68,81 @@ class Node
 			votes_received = 0;
 			voted_for = -1;
 			last_timestamp = 0;
-			//log = new std::vector<std::pair<int, Command> >();
 		}
 
 		int get_last_index(){
-			return log->size();
+			return log.size();
 		}
 
 		int get_last_term(){
-			return log->back().first;
+			return log.back().first;
 		}
 };
 
-class Event
-{
+class Event{
      	private:
-
 	public:
-		std::vector<Event> generated_events;
-		Node executed_on;
+		std::vector<Event*> generated_events;
+		int executed_on;
 		long start_time;
-		//should be a pure virtual
-		virtual void handle() {};
+		virtual void handle() = 0;//pure virtual
 };
 
 class ClientCommandEvent : public Event{
-     	
 	private:
-		Command* command;
-
+		Command command;
 	public:
-		ClientCommandEvent(Command* command, long start_time){
+		ClientCommandEvent(Command command, long start_time){
 			this->command = command;
 			this->start_time = start_time;
 		}
-		
+	
 		virtual void handle() override {
 			return;
 		}
-		//needs a virtual destructor to clean up the command on delete
-		
-		~ClientCommandEvent(){
-			delete command;
-		}
 };
 
+class TimeoutEvent : public Event{
+	private:
+	public:
+		long timeout_interval;
+		TimeoutEvent(int node_index, long start_time, long timeout_interval){
+			this->executed_on = node_index;
+			this->start_time = start_time;
+			this->timeout_interval = timeout_interval;
+		}
+		
+		virtual void handle() override {
+			cout<<"Handling timeout at "<<executed_on<<endl;
+			Node* executed_on_node = cluster.at(executed_on);
+			executed_on_node->time = start_time;
+			if(start_time - timeout_interval >= executed_on_node->last_timestamp){
+				cout<<"Updating "<<executed_on<< " member vars"<<endl;
+				executed_on_node->term++;						
+				executed_on_node->state = CANDIDATE;
+				executed_on_node->votes_received=1;
+				executed_on_node->voted_for=-1;
+				executed_on_node->last_timestamp=start_time;
+				for(int n=0; n<cluster.size(); ++n){
+					if(n!=executed_on){
+						//make a log function
+						//cout<<"Sending request vote to "<<n<<endl;
+						long network_delay = get_random(network_latency);
+						//generated_events.push_back(new RequestVoteEvent(n, start_time+network_delay, node_index, executed_on_node->term, 
+						//executed_on_node->log.get_last_term(), executed_on_node->log.get_last_index()));
+						continue;
+					}
+				}
+				long random_time = get_random(timeout);
+				generated_events.push_back(new TimeoutEvent(executed_on, start_time + random_time, random_time));
+			}
+		}
+};
 
 class Client
 {
      	private:
 		std::normal_distribution<double>* next_request_time;
-		std::default_random_engine* generator;	
 
 	public:
 		int requestID;
@@ -118,16 +152,16 @@ class Client
 			time = 0;
 			next_request_time = new std::normal_distribution<double>(2000, 1000);
 			requestID = 0;
-			unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-  			generator = new std::default_random_engine(seed);
 		}
 		
 		ClientCommandEvent* getCommand(){
 			std::string random_command = random_string(10);	
 			requestID++;
-			Command* cmd = new Command(requestID, random_command);
-			long random_time = (*next_request_time)(*generator);	
+			long random_time = get_random(next_request_time);
 			time += random_time;
+			Command cmd;
+			cmd.command_id = requestID;
+			cmd.command_string = random_command;
 			return new ClientCommandEvent(cmd, time);
 		}
 };
@@ -136,29 +170,50 @@ class Client
 class Simulator
 {
 	private:
-		std::priority_queue<Event*> event_queue;	
+		//yes, it should be a priority queue of Event*, bit we run into all kinds of problems
+		//	- cannot make a comparator on pointers
+		//	- cannot make a comparator on abstract class
+		//so, for now, taking the algorithmic hit and just iterating through to find the least
+		std::set<Event*> event_queue;//has to be a pointer to events as we want to store events of different types	
 
 	public:
 		Simulator(){
 			client = new Client();
+			unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
+  			generator = new std::default_random_engine(seed);
 		}	
+		
 		void start(){
-			event_queue.push(client->getCommand());
-			while(event_queue.size() != 0){
-				Event* event = event_queue.top();
-				event->handle();
-				event_queue.pop();
-				if(ClientCommandEvent* clientCommandEvent = dynamic_cast<ClientCommandEvent*>(event)){
-					std::cout<<"Client command received at " << clientCommandEvent->start_time << std::endl;
-					event_queue.push(client->getCommand());
+			//event_queue.push(client->getCommand());
+			while(!event_queue.empty()){
+				std::set<Event*>::iterator it = event_queue.begin();
+				Event* next = *it;
+				for (; it != event_queue.end(); ++it){
+					if(next->start_time > (*it)->start_time){
+						next = *it;
+					}
 				}
-				delete event;
+				event_queue.erase(next);
+				cout<<next->executed_on<<endl;
+				cout<<next->start_time<<endl;
+				next->handle();
+				//add to generated_events here 
+				if(ClientCommandEvent* clientCommandEvent = dynamic_cast<ClientCommandEvent*>(next)){
+					std::cout<<"Client command received at " << clientCommandEvent->start_time << std::endl;
+					event_queue.insert(client->getCommand());
+				}
+				delete next;
 			}
 			std::cerr<<"No More Events to Simulate !!"<<std::endl;	
 		}
 
 		void set_number_nodes(int number_nodes){
-			cluster = new std::vector<Node>(number_nodes);
+			for(int i=0; i<number_nodes; ++i){
+				Node* node = new Node();
+				cluster.push_back(node);
+				long random_time = get_random(timeout);
+				event_queue.insert(new TimeoutEvent(i, random_time, random_time));
+			}
 		}
 
 		void set_disk_write_bandwidth(double mean, double var){
@@ -176,12 +231,19 @@ class Simulator
 		void set_network_bandwidth(double mean, double var){
 			network_bandwidth = new std::normal_distribution<double>(mean, var);
 		}
+		
+		void set_timeout(double mean, double var){
+			timeout = new std::normal_distribution<double>(mean, var);
+		}
+
+		~Simulator(){
+			//clean up the dynamically allocated nodes
+		}
 };
 
 
 int main(int argc, char* argv[]){
 	Simulator simulator;
-	simulator.set_number_nodes(3);
 	//1000 uS - 1 ms
 	simulator.set_network_latency(7000, 200);
 	//10 bytes/uS - 10Mbps
@@ -190,7 +252,10 @@ int main(int argc, char* argv[]){
 	simulator.set_disk_read_bandwidth(100, 10);
 	//30 bytes/uS - 30Mbps
 	simulator.set_disk_write_bandwidth(30, 5);
+	//30000 uS - 3 ms
+	simulator.set_timeout(30000, 5000);
 	//various other parameters
+	simulator.set_number_nodes(2);
 	simulator.start();
 }
 
