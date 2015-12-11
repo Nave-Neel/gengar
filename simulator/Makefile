@@ -11,5 +11,5 @@ main: main.cpp
 	$(CXX) $(CPPFLAGS) $(SRCS) -o exe_raft
 
 clean:
-	$(RM) *.o raft
+	$(RM) *.o exe_raft
 

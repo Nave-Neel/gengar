@@ -114,11 +114,10 @@ class TimeoutEvent : public Event{
 		}
 		
 		virtual void handle() override {
-			log("Handling timeout at %n ", executed_on);
+			log("Handling timeout at %i ", executed_on);
 			Node* executed_on_node = cluster.at(executed_on);
 			executed_on_node->time = start_time;
 			if(start_time - timeout_interval >= executed_on_node->last_timestamp){
-				cout<<"Updating "<<executed_on<< " member vars"<<endl;
 				executed_on_node->term++;						
 				executed_on_node->state = CANDIDATE;
 				executed_on_node->votes_received=1;
@@ -126,8 +125,6 @@ class TimeoutEvent : public Event{
 				executed_on_node->last_timestamp=start_time;
 				for(int n=0; n<cluster.size(); ++n){
 					if(n!=executed_on){
-						//make a log function
-						//cout<<"Sending request vote to "<<n<<endl;
 						long network_delay = get_random(network_latency);
 						//generated_events.push_back(new RequestVoteEvent(n, start_time+network_delay, node_index, executed_on_node->term, 
 						//executed_on_node->log.get_last_term(), executed_on_node->log.get_last_index()));
@@ -200,8 +197,8 @@ class Simulator
 				}
 				//remove event from event queue
 				event_queue.erase(next);
-				cout<<next->executed_on<<endl;
-				cout<<next->start_time<<endl;
+				log("Executed on: %i", next->executed_on);
+				log("Executed time: %lu", next->start_time);
 				//handle the event - modifies state on the node
 				next->handle();
 				//add the generated events to the event queue
@@ -210,7 +207,7 @@ class Simulator
 				}
 				//add to generated_events here 
 				if(ClientCommandEvent* clientCommandEvent = dynamic_cast<ClientCommandEvent*>(next)){
-					std::cout<<"Client command received at " << clientCommandEvent->start_time << std::endl;
+					log("Client command received at %lu", clientCommandEvent->start_time);
 					event_queue.insert(client->getCommand());
 				}
 				//handles the deletion of all the generated events
