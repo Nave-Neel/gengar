@@ -114,7 +114,7 @@ class TimeoutEvent : public Event{
 		}
 		
 		virtual void handle() override {
-			cout<<"Handling timeout at "<<executed_on<<endl;
+			log("Handling timeout at %n ", executed_on);
 			Node* executed_on_node = cluster.at(executed_on);
 			executed_on_node->time = start_time;
 			if(start_time - timeout_interval >= executed_on_node->last_timestamp){
