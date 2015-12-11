@@ -8,8 +8,8 @@ OBJS=$(subst .cc,.o,$(SRCS))
 all: main
 
 main: main.cpp
-	$(CXX) $(CPPFLAGS) $(SRCS) -o main
+	$(CXX) $(CPPFLAGS) $(SRCS) -o raft
 
 clean:
-	$(RM) *.o
+	$(RM) *.o raft
 
