@@ -62,12 +62,12 @@ class Node
 		std::vector<std::pair<int, Command> > log;
 		
 		Node(){
-			time = 0;
+			time = 0;// Global time seen at the node 
 			term = 0;
 			state = FOLLOWER;
 			votes_received = 0;
 			voted_for = -1;
-			last_timestamp = 0;
+			last_timestamp = 0; // Last received the message from leader 
 		}
 
 		int get_last_index(){
@@ -136,7 +136,104 @@ class TimeoutEvent : public Event{
 			}
 		}
 };
+class ReceiveVoteEvent: public Event {
+	private:
+	public:
+	int voting_node;
+	bool voted;
+	bool update;
+	int voting_node_term;
 
+	ReceiveVoteEvent(int node_index,long start_time, int voting_node, bool voted , bool update , int voting_node_term) {
+	this->executed_on = node_index;
+	this->start_time = start_time;
+	this->voting_node =  voting_node;
+	this->voted= voted;
+	this->update= update;
+	this->voting_node_term = voting_node_term;
+	}
+	virtual void handle() override {
+	
+			log("Handling timeout at %i ", executed_on);
+			Node* executed_on_node = cluster.at(executed_on);
+			executed_on_node->time = start_time;
+		if(update) {
+			executed_on_node->term = voting_node_term;
+			executed_on_node->state = FOLLOWER;
+			return;
+		}
+		if(voted) {
+			if(executed_on_node->state == CANDIDATE) {
+				executed_on_node->votes_received++;
+				if (executed_on_node->votes_received > cluster.size()/2) {
+					executed_on_node->state = LEADER;
+					// Client request replicas 
+					// Client request caches 
+										
+					for(int n=0; n<cluster.size(); ++n){
+						if(n!=executed_on){
+							long network_delay = get_random(network_latency);
+							// Append Entries RPC 
+							}
+						}
+					}
+				}
+			}
+		}
+};
+
+
+class RequestVoteEvent: public Event {
+private:
+public:
+	int candidate_term;
+	int candidate;
+	int candidate_last_term;
+	int candidate_last_index;
+	long network_delay = get_random(network_latency);
+	RequestVoteEvent(int node_index,long start_time, int candidate , int candidate_term ,int candidate_last_index,int candidate_last_term) { 
+		this->executed_on = node_index;
+		this->start_time = start_time;
+		this->candidate = candidate;
+		this->candidate_term= candidate_term;
+		this->candidate_last_term = candidate_last_term;
+		this->candidate_last_index = candidate_last_index;
+	}		
+	virtual void handle () override {
+		
+			log("Handling timeout at %i ", executed_on);
+			Node* executed_on_node = cluster.at(executed_on);
+			executed_on_node->time = start_time;
+			if(executed_on_node->term > candidate_term) {
+				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,true,executed_on_node->term));	
+				}
+			if(executed_on_node->state == LEADER) {
+				if (executed_on_node->term < candidate_term) {
+					executed_on_node->state = FOLLOWER;
+				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,true,false,executed_on_node->term));	
+				}
+				else {
+
+				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,false,executed_on_node->term));	
+				     }
+			}
+			if(executed_on_node->voted_for!=NULL) {
+				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,false,executed_on_node->term));	
+				}
+			if((executed_on_node->get_last_term() > candidate_last_term)||((executed_on_node->get_last_term()== candidate_last_term) && (executed_on_node->get_last_index() > candidate_last_index))) {
+				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,false,executed_on_node->term));	
+				}
+			else {
+			executed_on_node->voted_for = candidate;
+			executed_on_node->last_timestamp = start_time;
+
+				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,true,false,executed_on_node->term));	
+				
+				long random_time = get_random(timeout);
+				generated_events.push_back(new TimeoutEvent(executed_on, start_time+random_time, random_time));
+		}
+	}
+};	
 class Client
 {
      	private:
