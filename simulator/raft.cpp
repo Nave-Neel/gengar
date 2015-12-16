@@ -27,6 +27,7 @@ std::normal_distribution<double>* network_latency;
 std::normal_distribution<double>* network_bandwidth;
 std::normal_distribution<double>* disk_read_bandwidth;
 std::normal_distribution<double>* disk_write_bandwidth;
+std::normal_distribution<double>* disk_write_latency;
 std::vector<Node*> cluster;
 Client* client;
 //-----------------Globals---------------------//
@@ -37,21 +38,21 @@ double get_random(std::normal_distribution<double>* distribution){
 
 class Command
 {
-     	private:
+	private:
 
 	public:
 		int command_id;
 		std::string command_string;
 		/* Not sure why but this constructor does not work
-		Command(int id, std::string command){
-			this->command_id = id;
-			this->command_string = command;
-		}*/
+		   Command(int id, std::string command){
+		   this->command_id = id;
+		   this->command_string = command;
+		   }*/
 };
 
 class Node
 {
-     	private:
+	private:
 	public:
 		long time;     
 		int term;
@@ -60,7 +61,7 @@ class Node
 		int voted_for;
 		long last_timestamp;
 		std::vector<std::pair<int, Command> > log;
-		
+
 		Node(){
 			time = 0;// Global time seen at the node 
 			term = 0;
@@ -80,7 +81,7 @@ class Node
 };
 
 class Event{
-     	private:
+	private:
 	public:
 		std::vector<Event*> generated_events;
 		int executed_on;
@@ -97,7 +98,7 @@ class ClientCommandEvent : public Event{
 			this->command = command;
 			this->start_time = start_time;
 		}
-	
+
 		virtual void handle() override {
 			return;
 		}
@@ -112,7 +113,7 @@ class TimeoutEvent : public Event{
 			this->start_time = start_time;
 			this->timeout_interval = timeout_interval;
 		}
-		
+
 		virtual void handle() override {
 			log("Handling timeout at %i ", executed_on);
 			Node* executed_on_node = cluster.at(executed_on);
@@ -123,57 +124,59 @@ class TimeoutEvent : public Event{
 				executed_on_node->votes_received=1;
 				executed_on_node->voted_for=-1;
 				executed_on_node->last_timestamp=start_time;
+				long disk_delay = get_random(disk_latency);
 				for(int n=0; n<cluster.size(); ++n){
 					if(n!=executed_on){
 						long network_delay = get_random(network_latency);
-						//generated_events.push_back(new RequestVoteEvent(n, start_time+network_delay, node_index, executed_on_node->term, 
+						//generated_events.push_back(new RequestVoteEvent(n, start_time+network_delay+disk_delay, node_index, executed_on_node->term, 
 						//executed_on_node->log.get_last_term(), executed_on_node->log.get_last_index()));
 						continue;
 					}
 				}
 				long random_time = get_random(timeout);
-				generated_events.push_back(new TimeoutEvent(executed_on, start_time + random_time, random_time));
+				generated_events.push_back(new TimeoutEvent(executed_on, start_time + disk_delay + random_time, random_time));
 			}
 		}
 };
+
 class ReceiveVoteEvent: public Event {
 	private:
 	public:
-	int voting_node;
-	bool voted;
-	bool update;
-	int voting_node_term;
+		int voting_node;
+		bool voted;
+		bool update;
+		int voting_node_term;
 
-	ReceiveVoteEvent(int node_index,long start_time, int voting_node, bool voted , bool update , int voting_node_term) {
-	this->executed_on = node_index;
-	this->start_time = start_time;
-	this->voting_node =  voting_node;
-	this->voted= voted;
-	this->update= update;
-	this->voting_node_term = voting_node_term;
-	}
-	virtual void handle() override {
-	
+		ReceiveVoteEvent(int node_index,long start_time, int voting_node, bool voted , bool update , int voting_node_term) {
+			this->executed_on = node_index;
+			this->start_time = start_time;
+			this->voting_node =  voting_node;
+			this->voted= voted;
+			this->update= update;
+			this->voting_node_term = voting_node_term;
+		}
+		virtual void handle() override {
+
 			log("Handling timeout at %i ", executed_on);
 			Node* executed_on_node = cluster.at(executed_on);
 			executed_on_node->time = start_time;
-		if(update) {
-			executed_on_node->term = voting_node_term;
-			executed_on_node->state = FOLLOWER;
-			return;
-		}
-		if(voted) {
-			if(executed_on_node->state == CANDIDATE) {
-				executed_on_node->votes_received++;
-				if (executed_on_node->votes_received > cluster.size()/2) {
-					executed_on_node->state = LEADER;
-					// Client request replicas 
-					// Client request caches 
-										
-					for(int n=0; n<cluster.size(); ++n){
-						if(n!=executed_on){
-							long network_delay = get_random(network_latency);
-							// Append Entries RPC 
+			if(update) {
+				executed_on_node->term = voting_node_term;
+				executed_on_node->state = FOLLOWER;
+				return;
+			}
+			if(voted) {
+				if(executed_on_node->state == CANDIDATE) {
+					executed_on_node->votes_received++;
+					if (executed_on_node->votes_received > cluster.size()/2) {
+						executed_on_node->state = LEADER;
+						// Client request replicas 
+						// Client request caches 
+
+						for(int n=0; n<cluster.size(); ++n){
+							if(n!=executed_on){
+								long network_delay = get_random(network_latency);
+								// Append Entries RPC 
 							}
 						}
 					}
@@ -182,73 +185,72 @@ class ReceiveVoteEvent: public Event {
 		}
 };
 
-
 class RequestVoteEvent: public Event {
-private:
-public:
-	int candidate_term;
-	int candidate;
-	int candidate_last_term;
-	int candidate_last_index;
-	long network_delay = get_random(network_latency);
-	RequestVoteEvent(int node_index,long start_time, int candidate , int candidate_term ,int candidate_last_index,int candidate_last_term) { 
-		this->executed_on = node_index;
-		this->start_time = start_time;
-		this->candidate = candidate;
-		this->candidate_term= candidate_term;
-		this->candidate_last_term = candidate_last_term;
-		this->candidate_last_index = candidate_last_index;
-	}		
-	virtual void handle () override {
-		
+	private:
+	public:
+		int candidate_term;
+		int candidate;
+		int candidate_last_term;
+		int candidate_last_index;
+		long network_delay = get_random(network_latency);
+		RequestVoteEvent(int node_index,long start_time, int candidate , int candidate_term ,int candidate_last_index,int candidate_last_term) { 
+			this->executed_on = node_index;
+			this->start_time = start_time;
+			this->candidate = candidate;
+			this->candidate_term= candidate_term;
+			this->candidate_last_term = candidate_last_term;
+			this->candidate_last_index = candidate_last_index;
+		}		
+		virtual void handle () override {
+
 			log("Handling timeout at %i ", executed_on);
 			Node* executed_on_node = cluster.at(executed_on);
 			executed_on_node->time = start_time;
 			if(executed_on_node->term > candidate_term) {
 				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,true,executed_on_node->term));	
-				}
+			}
 			if(executed_on_node->state == LEADER) {
 				if (executed_on_node->term < candidate_term) {
 					executed_on_node->state = FOLLOWER;
-				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,true,false,executed_on_node->term));	
+					generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,true,false,executed_on_node->term));	
 				}
 				else {
 
-				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,false,executed_on_node->term));	
-				     }
+					generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,false,executed_on_node->term));	
+				}
 			}
 			if(executed_on_node->voted_for!=NULL) {
 				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,false,executed_on_node->term));	
-				}
+			}
 			if((executed_on_node->get_last_term() > candidate_last_term)||((executed_on_node->get_last_term()== candidate_last_term) && (executed_on_node->get_last_index() > candidate_last_index))) {
 				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,false,false,executed_on_node->term));	
-				}
+			}
 			else {
-			executed_on_node->voted_for = candidate;
-			executed_on_node->last_timestamp = start_time;
+				executed_on_node->voted_for = candidate;
+				executed_on_node->last_timestamp = start_time;
 
 				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay,executed_on,true,false,executed_on_node->term));	
-				
+
 				long random_time = get_random(timeout);
 				generated_events.push_back(new TimeoutEvent(executed_on, start_time+random_time, random_time));
+			}
 		}
-	}
 };	
 class Client
 {
-     	private:
+	private:
 		std::normal_distribution<double>* next_request_time;
 
 	public:
 		int requestID;
 		long time;	
-	
+
 		Client(){
 			time = 0;
 			next_request_time = new std::normal_distribution<double>(2000, 1000);
 			requestID = 0;
 		}
-		
+
 		ClientCommandEvent* getCommand(){
 			std::string random_command = random_string(10);	
 			requestID++;
@@ -259,7 +261,7 @@ class Client
 			cmd.command_string = random_command;
 			return new ClientCommandEvent(cmd, time);
 		}
-		
+
 		~Client(){
 			delete next_request_time;
 		}
@@ -279,9 +281,9 @@ class Simulator
 		Simulator(){
 			client = new Client();
 			unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
-  			generator = new std::default_random_engine(seed);
+			generator = new std::default_random_engine(seed);
 		}	
-		
+
 		void start(){
 			//event_queue.push(client->getCommand());
 			while(!event_queue.empty()){
@@ -322,6 +324,10 @@ class Simulator
 			}
 		}
 
+		void set_disk_write_latency(double mean, double var){
+			disk_write_latency = new std::normal_distribution<double>(mean, var);
+		}
+
 		void set_disk_write_bandwidth(double mean, double var){
 			disk_write_bandwidth = new std::normal_distribution<double>(mean, var);
 		}
@@ -337,7 +343,7 @@ class Simulator
 		void set_network_bandwidth(double mean, double var){
 			network_bandwidth = new std::normal_distribution<double>(mean, var);
 		}
-		
+
 		void set_timeout(double mean, double var){
 			timeout = new std::normal_distribution<double>(mean, var);
 		}
@@ -356,8 +362,8 @@ class Simulator
 
 int main(int argc, char* argv[]){
 	Simulator simulator;
-	//1000 uS - 1 ms
-	simulator.set_network_latency(7000, 200);
+	//15ms
+	simulator.set_network_latency(15, 5);
 	//10 bytes/uS - 10Mbps
 	simulator.set_network_bandwidth(10, 3);
 	//100 bytes/uS - 100Mbps
@@ -366,6 +372,8 @@ int main(int argc, char* argv[]){
 	simulator.set_disk_write_bandwidth(30, 5);
 	//30000 uS - 3 ms
 	simulator.set_timeout(30000, 5000);
+	//20ms
+	simulator.set_disk_write_latency(20, 5);
 	//various other parameters
 	simulator.set_number_nodes(2);
 	simulator.start();
