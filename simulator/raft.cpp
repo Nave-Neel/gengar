@@ -104,87 +104,6 @@ class ClientCommandEvent : public Event{
 		}
 };
 
-class TimeoutEvent : public Event{
-	private:
-	public:
-		long timeout_interval;
-		TimeoutEvent(int node_index, long start_time, long timeout_interval){
-			this->executed_on = node_index;
-			this->start_time = start_time;
-			this->timeout_interval = timeout_interval;
-		}
-
-		virtual void handle() override {
-			log("Handling timeout at %i ", executed_on);
-			Node* executed_on_node = cluster.at(executed_on);
-			executed_on_node->time = start_time;
-			if(start_time - timeout_interval >= executed_on_node->last_timestamp){
-				executed_on_node->term++;						
-				executed_on_node->state = CANDIDATE;
-				executed_on_node->votes_received=1;
-				executed_on_node->voted_for=-1;
-				executed_on_node->last_timestamp=start_time;
-				long disk_delay = get_random(disk_latency);
-				for(int n=0; n<cluster.size(); ++n){
-					if(n!=executed_on){
-						long network_delay = get_random(network_latency);
-						//generated_events.push_back(new RequestVoteEvent(n, start_time+network_delay+disk_delay, node_index, executed_on_node->term, 
-						//executed_on_node->log.get_last_term(), executed_on_node->log.get_last_index()));
-						continue;
-					}
-				}
-				long random_time = get_random(timeout);
-				generated_events.push_back(new TimeoutEvent(executed_on, start_time + disk_delay + random_time, random_time));
-			}
-		}
-};
-
-class ReceiveVoteEvent: public Event {
-	private:
-	public:
-		int voting_node;
-		bool voted;
-		bool update;
-		int voting_node_term;
-
-		ReceiveVoteEvent(int node_index,long start_time, int voting_node, bool voted , bool update , int voting_node_term) {
-			this->executed_on = node_index;
-			this->start_time = start_time;
-			this->voting_node =  voting_node;
-			this->voted= voted;
-			this->update= update;
-			this->voting_node_term = voting_node_term;
-		}
-		virtual void handle() override {
-
-			log("Handling timeout at %i ", executed_on);
-			Node* executed_on_node = cluster.at(executed_on);
-			executed_on_node->time = start_time;
-			if(update) {
-				executed_on_node->term = voting_node_term;
-				executed_on_node->state = FOLLOWER;
-				return;
-			}
-			if(voted) {
-				if(executed_on_node->state == CANDIDATE) {
-					executed_on_node->votes_received++;
-					if (executed_on_node->votes_received > cluster.size()/2) {
-						executed_on_node->state = LEADER;
-						// Client request replicas 
-						// Client request caches 
-
-						for(int n=0; n<cluster.size(); ++n){
-							if(n!=executed_on){
-								long network_delay = get_random(network_latency);
-								// Append Entries RPC 
-							}
-						}
-					}
-				}
-			}
-		}
-};
-
 class RequestVoteEvent: public Event {
 	private:
 	public:
@@ -193,17 +112,19 @@ class RequestVoteEvent: public Event {
 		int candidate_last_term;
 		int candidate_last_index;
 		long network_delay = get_random(network_latency);
-		RequestVoteEvent(int node_index,long start_time, int candidate , int candidate_term ,int candidate_last_index,int candidate_last_term) { 
+
+		RequestVoteEvent(int node_index, long start_time, int candidate , int candidate_term, int candidate_last_term, int candidate_last_index) { 
 			this->executed_on = node_index;
 			this->start_time = start_time;
 			this->candidate = candidate;
 			this->candidate_term= candidate_term;
 			this->candidate_last_term = candidate_last_term;
 			this->candidate_last_index = candidate_last_index;
-		}		
+		}
+		
 		virtual void handle () override {
-
-			log("Handling timeout at %i ", executed_on);
+			log("Request Vote Event");
+			/*
 			Node* executed_on_node = cluster.at(executed_on);
 			executed_on_node->time = start_time;
 			if(executed_on_node->term > candidate_term) {
@@ -234,8 +155,92 @@ class RequestVoteEvent: public Event {
 				long random_time = get_random(timeout);
 				generated_events.push_back(new TimeoutEvent(executed_on, start_time+random_time, random_time));
 			}
+			*/
 		}
-};	
+};
+
+
+class TimeoutEvent : public Event{
+	private:
+	public:
+		long timeout_interval;
+		TimeoutEvent(int node_index, long start_time, long timeout_interval){
+			this->executed_on = node_index;
+			this->start_time = start_time;
+			this->timeout_interval = timeout_interval;
+		}
+
+		virtual void handle() override {
+			log("Handling timeout on %i at %lu ", executed_on, start_time);
+			Node* executed_on_node = cluster.at(executed_on);
+			executed_on_node->time = start_time;
+			if(start_time - timeout_interval >= executed_on_node->last_timestamp){
+				executed_on_node->term++;						
+				executed_on_node->state = CANDIDATE;
+				executed_on_node->votes_received=1;
+				executed_on_node->voted_for=-1;
+				executed_on_node->last_timestamp=start_time;
+				long disk_delay = get_random(disk_write_latency);
+				for(int n=0; n<cluster.size(); ++n){
+					if(n!=executed_on){
+						long network_delay = get_random(network_latency);
+						//generated_events.push_back(new RequestVoteEvent(n, start_time+network_delay+disk_delay, executed_on, executed_on_node->term, executed_on_node->get_last_term(), executed_on_node->get_last_index()));
+						continue;
+					}
+				}
+				long random_time = get_random(timeout);
+				generated_events.push_back(new TimeoutEvent(executed_on, start_time + disk_delay + random_time, random_time));
+			}
+		}
+};
+
+class ReceiveVoteEvent: public Event {
+	private:
+	public:
+		int voting_node;
+		bool voted;
+		bool update;
+		int voting_node_term;
+
+		ReceiveVoteEvent(int node_index,long start_time, int voting_node, bool voted , bool update , int voting_node_term) {
+			this->executed_on = node_index;
+			this->start_time = start_time;
+			this->voting_node =  voting_node;
+			this->voted= voted;
+			this->update= update;
+			this->voting_node_term = voting_node_term;
+		}
+		virtual void handle() override {
+
+			log("Handling timeout");
+			Node* executed_on_node = cluster.at(executed_on);
+			executed_on_node->time = start_time;
+			if(update) {
+				executed_on_node->term = voting_node_term;
+				executed_on_node->state = FOLLOWER;
+				return;
+			}
+			if(voted) {
+				if(executed_on_node->state == CANDIDATE) {
+					executed_on_node->votes_received++;
+					if (executed_on_node->votes_received > cluster.size()/2) {
+						executed_on_node->state = LEADER;
+						// Client request replicas 
+						// Client request caches 
+
+						for(int n=0; n<cluster.size(); ++n){
+							if(n!=executed_on){
+								long network_delay = get_random(network_latency);
+								// Append Entries RPC 
+							}
+						}
+					}
+				}
+			}
+		}
+};
+
+
 class Client
 {
 	private:
@@ -300,6 +305,7 @@ class Simulator
 				log("Executed time: %lu", next->start_time);
 				//handle the event - modifies state on the node
 				next->handle();
+				getch();
 				//add the generated events to the event queue
 				for(int e=0; e<next->generated_events.size(); ++e){
 					event_queue.insert(next->generated_events[e]);

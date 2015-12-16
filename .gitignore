@@ -1,3 +1,4 @@
 *.out
 *.h.gch
 raft
+simulator/exe_raft
