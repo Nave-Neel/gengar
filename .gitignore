@@ -2,3 +2,5 @@
 *.h.gch
 raft
 simulator/exe_raft
+sorted_times.txt
+times.txt
