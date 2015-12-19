@@ -18,6 +18,9 @@ using std::string;
 
 enum STATE{LEADER, FOLLOWER, CANDIDATE};
 
+bool leader_selected = false;
+long time_to_elect;
+
 //some forward declarations for the globals
 class Client;
 class Node;
@@ -27,7 +30,7 @@ extern TimeoutEvent* getTimeoutEvent(int, int, int);
 
 //-----------------Globals---------------------//
 std::default_random_engine* generator;
-std::normal_distribution<double>* timeout;
+std::uniform_int_distribution<int>* timeout;
 std::normal_distribution<double>* network_latency;
 std::normal_distribution<double>* network_bandwidth;
 std::normal_distribution<double>* disk_read_bandwidth;
@@ -38,6 +41,10 @@ Client* client;
 //-----------------Globals---------------------//
 
 double get_random(std::normal_distribution<double>* distribution){
+	return (*distribution)(*generator); 
+}
+
+double get_uniform(std::uniform_int_distribution<int>* distribution){
 	return (*distribution)(*generator); 
 }
 
@@ -124,7 +131,7 @@ class AppendEntriesEvent: public Event {
 		int leader_prec_term;
 		int commitindex;
  		
-		AppendEntriesEvent(int node_index, int start_time, string command, int leader_term, int leader_node, int leader_prec_term, int leader_prec_index, int commitindex){
+		AppendEntriesEvent(int node_index, int start_time, string command, int leader_node, int leader_term, int leader_prec_term, int leader_prec_index, int commitindex){
 			this->executed_on = node_index;
 			this->start_time = start_time;
 			this->cmd = command;
@@ -136,8 +143,10 @@ class AppendEntriesEvent: public Event {
 		}
 		
 		virtual void handle() override {
+			log("AppendEntries Event");
 			Node* executed_on_node = cluster.at(executed_on);
-			if(leader_term > executed_on_node->term){
+			//is this a strict greater than?
+			if(leader_term >= executed_on_node->term){
 				executed_on_node->state = FOLLOWER;
 				executed_on_node->term = leader_term;
 				executed_on_node->votes_received = 0;
@@ -171,7 +180,7 @@ class ReceiveVoteEvent: public Event {
 			Node* executed_on_node = cluster.at(executed_on);
 			executed_on_node->time = start_time;
 			if(update){
-				assert(voting_node_term > executed_on_node->term);
+				//assert(voting_node_term > executed_on_node->term);
 				executed_on_node->term = voting_node_term;
 				executed_on_node->state = FOLLOWER;
 				return;
@@ -179,6 +188,7 @@ class ReceiveVoteEvent: public Event {
 			if(voted) {
 				if(executed_on_node->state == CANDIDATE) {
 					executed_on_node->votes_received++;
+					long max_delay = 0;
 					if (executed_on_node->votes_received > cluster.size()/2) {
 						executed_on_node->state = LEADER;
 						// Client request replicas -- mapping each replica to how many are present in each follower 
@@ -187,9 +197,15 @@ class ReceiveVoteEvent: public Event {
 						for(int n=0; n<cluster.size(); ++n){
 							if(n!=executed_on){
 								long network_delay = get_random(network_latency);
-								// Append Entries RPC 
+								if(max_delay < network_delay){
+									max_delay = network_delay;
+								}
+								string s;
+								generated_events.push_back(new AppendEntriesEvent(n, start_time+network_delay, s, executed_on, executed_on_node->term, executed_on_node->get_last_term(), executed_on_node->get_last_index(), 0));
 							}
 						}
+						leader_selected=true;
+						time_to_elect = start_time+max_delay;
 					}
 				}
 			}
@@ -207,6 +223,7 @@ class DiskWriteOtherVoteEvent: public Event {
 		}
 
 		virtual void handle() override{
+			log("Disk write before voting Event");
 			Node* executed_on_node = cluster.at(executed_on);
 			assert( executed_on_node->state = FOLLOWER);
 			executed_on_node->voted_for = candidateVotedFor;
@@ -233,12 +250,14 @@ class RequestVoteEvent: public Event {
 		}
 
 		virtual void handle () override {
-			long network_delay = get_random(network_latency);
 			log("Request Vote Event");
+			long network_delay = get_random(network_latency);
 			Node* executed_on_node = cluster.at(executed_on);
 			executed_on_node->time = start_time;
 			if(executed_on_node->term > candidate_term) {
-				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay, executed_on, false, true, executed_on_node->term));	
+				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay, executed_on, false, true, executed_on_node->term));
+				log("larger term");	
+				return;
 			}
 			if(executed_on_node->state == LEADER) {
 				if (executed_on_node->term < candidate_term) {
@@ -250,22 +269,27 @@ class RequestVoteEvent: public Event {
 					// this is the leader, inform the candidate you are not voting for it - the candidate has probably lost a AppendRPC packet
 					generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay, executed_on, false, false, executed_on_node->term));
 				}
+				return;
 			}
 			//this check should be -1 consistently
 			if(executed_on_node->voted_for != -1) {
 				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay, executed_on, false, false, executed_on_node->term));
+				log("voted already");	
+				return;
 			}
 			//candidate could have incomplete log without all the committed entries
 			if((executed_on_node->get_last_term() > candidate_last_term)||((executed_on_node->get_last_term()== candidate_last_term) && (executed_on_node->get_last_index() > candidate_last_index))) {
 				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay, executed_on, false, false, executed_on_node->term));	
+				log("log out of date");	
 			}
 			else {
 				//if a timeout happens while the write to disk is happening, then the timeout will see this last timestamp 
 				executed_on_node->last_timestamp = start_time;
-				long random_time = get_random(timeout);
+				long random_time = get_uniform(timeout);
 				//wow a reinterpret_cast -- bad
 				generated_events.push_back(reinterpret_cast<Event*>(getTimeoutEvent(executed_on, start_time+random_time, random_time)));
-				generated_events.push_back(new ReceiveVoteEvent(candidate, start_time+network_delay, executed_on, true, false, executed_on_node->term));	
+				generated_events.push_back(new DiskWriteOtherVoteEvent(executed_on, start_time+network_delay, candidate));	
+				log("voting");	
 			}
 		}
 };
@@ -279,6 +303,7 @@ class DiskWriteTimeoutEvent: public Event {
 		}
 
 		virtual void handle() override{
+			log("Disk write before Requesting vote Event");
 			Node* executed_on_node = cluster.at(executed_on);
 			//check if still candidate
 			if(executed_on_node->state = CANDIDATE){
@@ -307,11 +332,12 @@ class TimeoutEvent : public Event{
 		virtual void handle() override {
 			log("Handling timeout on %i at %lu ", executed_on, start_time);
 			Node* executed_on_node = cluster.at(executed_on);
-			log("%i ", executed_on_node->log.size());
 			executed_on_node->time = start_time;
 			if(start_time - timeout_interval >= executed_on_node->last_timestamp){
 				executed_on_node->last_timestamp=start_time;
-				long random_time = get_random(timeout);
+				long random_time = get_uniform(timeout);
+				executed_on_node->voted_for = -1;
+				executed_on_node->votes_received = 0;
 				//should the timeout include the disk delay - i dont think so as this would introduce some jittering by itself which would be enough for the timeout jittering? 
 				//and the paper seems to make no mention of this? - but then this is the second timeout where you are waiting for response from candidate right?, maybe they
 				generated_events.push_back(new TimeoutEvent(executed_on, start_time + random_time, random_time));
@@ -380,6 +406,9 @@ class Simulator
 			//event_queue.push(client->getCommand());
 			long last_time;
 			while(!event_queue.empty()){
+				if(leader_selected){
+					break;
+				}
 				std::set<Event*>::iterator it = event_queue.begin();
 				Event* next = *it;
 				for (; it != event_queue.end(); ++it){
@@ -394,7 +423,7 @@ class Simulator
 				log("Executed time: %lu", next->start_time);
 				//handle the event - modifies state on the node
 				next->handle();
-				getch();
+				//getch();
 				//add the generated events to the event queue
 				for(int e=0; e<next->generated_events.size(); ++e){
 					event_queue.insert(next->generated_events[e]);
@@ -406,16 +435,18 @@ class Simulator
 				}
 				//handles the deletion of all the generated events
 				delete next;
+				log("==========================================");	
 			}
-			std::cerr<<"No More Events to Simulate !!"<<std::endl;	
-			std::cerr<<"TIME TO ELECT: "<<last_time<<std::endl;	
+			//std::cerr<<"No More Events to Simulate !!"<<std::endl;	
+			//std::cerr<<"TIME TO ELECT: "<<time_to_elect<<std::endl;	
+			std::cerr<<time_to_elect<<std::endl;	
 		}
 
 		void set_number_nodes(int number_nodes){
 			for(int i=0; i<number_nodes; ++i){
 				Node* node = new Node();
 				cluster.push_back(node);
-				long random_time = get_random(timeout);
+				long random_time = get_uniform(timeout);
 				event_queue.insert(new TimeoutEvent(i, random_time, random_time));
 			}
 		}
@@ -440,8 +471,8 @@ class Simulator
 			network_bandwidth = new std::normal_distribution<double>(mean, var);
 		}
 
-		void set_timeout(double mean, double var){
-			timeout = new std::normal_distribution<double>(mean, var);
+		void set_timeout(int min, int max){
+			timeout = new std::uniform_int_distribution<int>(min, max);
 		}
 
 		~Simulator(){
@@ -459,11 +490,11 @@ class Simulator
 int main(int argc, char* argv[]){
 	Simulator simulator;
 	//15ms
-	simulator.set_network_latency(15, 5);
+	simulator.set_network_latency(15, 4);
 	//30000 uS - 3 ms
-	simulator.set_timeout(150, 5);
+	simulator.set_timeout(150, 200);
 	//20ms
-	simulator.set_disk_write_latency(15, 2);
+	simulator.set_disk_write_latency(15, 1);
 	/*
 	//100 bytes/uS - 100Mbps
 	simulator.set_disk_read_bandwidth(100, 10);
@@ -473,6 +504,6 @@ int main(int argc, char* argv[]){
 	simulator.set_network_bandwidth(10, 3);
 	*/
 	//various other parameters
-	simulator.set_number_nodes(2);
+	simulator.set_number_nodes(3);
 	simulator.start();
 }
