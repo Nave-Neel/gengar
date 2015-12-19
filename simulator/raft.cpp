@@ -70,6 +70,7 @@ class Node
 		int term;
 		STATE state;
 		int votes_received;
+		int votes_not_received;
 		int voted_for;
 		long last_timestamp;
 		std::vector<std::pair<int, Command> > log;
@@ -79,6 +80,7 @@ class Node
 			term = 0;
 			state = FOLLOWER;
 			votes_received = 0;
+			votes_not_received = 0;
 			voted_for = -1;
 			last_timestamp = 0; // Last received the message from leader 
 		}
@@ -150,6 +152,7 @@ class AppendEntriesEvent: public Event {
 				executed_on_node->state = FOLLOWER;
 				executed_on_node->term = leader_term;
 				executed_on_node->votes_received = 0;
+				executed_on_node->votes_not_received = 0;
 				executed_on_node->voted_for = -1;
 			}
 			executed_on_node->last_timestamp = start_time;
@@ -206,6 +209,18 @@ class ReceiveVoteEvent: public Event {
 						}
 						leader_selected=true;
 						time_to_elect = start_time+max_delay;
+					}
+				}
+			}
+			else{
+				if(executed_on_node->state == CANDIDATE) {
+					executed_on_node->votes_not_received++;
+					if (executed_on_node->votes_not_received > cluster.size()/2) {
+						//let's reset the current timeout
+						executed_on_node->last_timestamp = start_time;
+						long random_time = get_uniform(timeout);
+						//let's cause another timeout at 2*timeout of the present timeout
+						generated_events.push_back(reinterpret_cast<Event*>(getTimeoutEvent(executed_on, start_time+2*random_time, random_time)));
 					}
 				}
 			}
@@ -338,6 +353,7 @@ class TimeoutEvent : public Event{
 				long random_time = get_uniform(timeout);
 				executed_on_node->voted_for = -1;
 				executed_on_node->votes_received = 0;
+				executed_on_node->votes_not_received = 0;
 				//should the timeout include the disk delay - i dont think so as this would introduce some jittering by itself which would be enough for the timeout jittering? 
 				//and the paper seems to make no mention of this? - but then this is the second timeout where you are waiting for response from candidate right?, maybe they
 				generated_events.push_back(new TimeoutEvent(executed_on, start_time + random_time, random_time));
@@ -492,7 +508,7 @@ int main(int argc, char* argv[]){
 	//15ms
 	simulator.set_network_latency(15, 4);
 	//30000 uS - 3 ms
-	simulator.set_timeout(150, 200);
+	simulator.set_timeout(150, 155);
 	//20ms
 	simulator.set_disk_write_latency(15, 1);
 	/*
